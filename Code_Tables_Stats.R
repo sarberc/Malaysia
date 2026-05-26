@@ -1,8 +1,6 @@
 
 # Tables, statistics and data analysis for Malaysia DOM paper ------------------------------------
 
-
-# Load data and libraries -------------------------------------------------
 rm(list = ls(all = TRUE))
 par(mfrow = c(1, 1))
 
@@ -11,73 +9,60 @@ library(tidyverse)
 library(vegan)
 library(geosphere)
 
-# ---- Load data ----
-#setwd of data folder
+#1. ---- Load data ----
+setwd(...)
 
-ct <- #read.csv of DOM crosstab file
-data <- #read.csv of metadata file
-  
+data <- #read.csv("Metadata_Malaysia_LO.csv", sep = ",", header = TRUE, fill = TRUE)
+ct <- #read.csv("DOM_Malaysia_LO.csv", sep = ",", header = TRUE, fill = TRUE)
+
+ch = ct[,1:84]
+dom = ct[,85:ncol(ct)]
+
+colnames(dom) = data$FT_Name
+rownames(dom) = ch$mz
+
 # Convert oxygen consumption rate from µM min^-1 to µM h^-1
 data$K <- data$K * 60 
 
-# 1. Process DOM data -----------------------------------------------------
-ch <- ct[, 1:83] #chemical attributes on crosstab
-dom <- ct[, 84:178]#Peak intensities
-
-dom[is.na(dom)] <- 0
-
-#Average duplicate samples
-dom3 <- dom %>%
-  group_by(data$Sample_Name) %>%
-  summarise_all(mean)
-
-data2 <- data[!duplicated(data$Sample_Name), ]
-
-# Apply method detection limit to averaged samples
-mdl <- ct$MDL
-dom <- dom3[, 2:ncol(dom3)]
-dom[dom < mdl] <- 0
-
-# Relative abundance normalisation
-domn <- decostand(t(dom), method = "total", MARGIN = 2)
-dom <- as.data.frame(domn)
-colnames(dom) <- data2$Sample_Name
-
-# Keep metadata aligned with DOM table
-dom <- dom[, 1:54]
-data2 <- data2[1:54, ]
-
 
 # 2. DOM indices and compound classes -------------------------------------
-podom <- as.data.frame(t(dom))
+# Relative abundance normalisation
+domn <- decostand(dom, method = "total", MARGIN = 2)
+podom <- as.data.frame(t(domn))
 
-phet.N <- dom %>% filter(ct$N > 0)
-phet.S <- dom %>% filter(ct$S > 0)
+keep <- data$River != "Rajang"
 
-data2$S_ab <- colSums(phet.S)
-data2$N_ab <- colSums(phet.N)
+podom <- podom[keep, ]
+dom <- as.data.frame(t(podom))
+data <- data[keep, ]
 
-het.dom <- rbind.data.frame(phet.N, phet.S)
-hetd <- as.data.frame(t(het.dom))
 
-podat <- data2
+phet.N <- dom %>% filter(ch$N > 0)
+phet.S <- dom %>% filter(ch$S > 0)
+count.N = phet.N
+count.N[count.N>0]=1
+count.S = phet.S
+count.S[count.S>0]=1
+
+
+data$S_ab <- colSums(phet.S)
+data$N_ab <- colSums(phet.N)
+data$N_num=colSums(count.N)
+data$S_num=colSums(count.S)
+
+
+phet.het <- dom %>% filter(ch$N > 0 & ch$S > 0)
+
+podat <- data
 
 podat$rich <- specnumber(podom)
 podat$diversity <- diversity(podom, index = "shannon")
-podat$Het_Perc <- rowSums(hetd) * 100
-podat$weighted.OC <- colSums(ct$O.C * dom)
-podat$weighted.HC <- colSums(ct$H.C * dom)
-
-# Use AImod if present; otherwise fall back to AI
-if ("AI.mod" %in% names(ct)) {
-  podat$AImod <- colSums(ct$AI.mod * dom)
-} else {
-  podat$AImod <- colSums(ct$AI * dom)
-}
-
-podat$highly_unsaturated <- colSums(ct$Highly.unsaturated * dom)
-podat$N_containing <- colSums(ct$Unsaturated.with.N * dom)
-podat$saturated <- colSums(ct$Saturated * dom)
+podat$weighted.OC <- colSums(ch$O.C * dom)
+podat$weighted.HC <- colSums(ch$H.C * dom)
+podat$highly_unsaturated <- colSums(ch$Highly.unsaturated * dom)
+podat$AImod <- colSums(ch$AI.mod * dom)
+podat$N_containing <- data$N_ab*100
+podat$Het_Perc <- colSums(phet.het) * 100
 
 # CRAM
 dbe <- 1 + (2 * ch$C - ch$H + ch$N + ch$P) / 2
@@ -112,9 +97,7 @@ podat$lignin_like <- colSums(lignin)
 # Keep only main study rivers for tables/statistics
 study_rivers <- c("Maludam", "Sebuyau", "Simunjan")
 
-podat_main <- podat %>%
-  filter(River %in% study_rivers, Sal <= 0.5)
-
+podat_main <- podat 
 
 #3. Setting up tables -------------------------------------------------------
 make_summary_table <- function(dat, vars) {
@@ -153,6 +136,8 @@ make_range_table <- function(dat, vars) {
 
 
 #4. Table 1 -----------------------------------------------------------------
+
+
 table1_vars <- c(
   "Temp",
   "DOC",
@@ -172,8 +157,6 @@ table1_pre <- table1_summary %>%
 table1_post <- table1_summary %>%
   filter(Season == "Post-monsoon")
 
-write.csv(table1_summary, "table1_R.csv")
-
 #5.  Table 2 -----------------------------------------------------------------
 
 
@@ -184,8 +167,11 @@ table2_vars <- c(
   "weighted.HC",
   "MLB",
   "CRAM",
-  "N_containing",
-  "S_containing",
+  "highly_unsaturated",
+  "N_ab",
+  "S_ab",
+  "N_num",
+  "S_num",
   "AImod"
  )
 
@@ -198,7 +184,6 @@ table2_pre <- table2_summary %>%
 
 table2_post <- table2_summary %>%
   filter(Season == "Post-monsoon")
-
 
 #6. Values for text : ranges ------------------------------------------------
 
@@ -350,29 +335,85 @@ stats_table_by_season <- purrr::map_dfr(
 )
 
 stats_table_all <- stats_table_by_season
-
-stats_table_all <- stats_table_all %>%
+stats_table_all <- dplyr::bind_rows(
+  stats_table_overall,
+  stats_table_by_season
+) %>%
   mutate(
     ANOVA_p_round = signif(ANOVA_p, 3),
     Tukey_p_adj_round = signif(Tukey_p_adj, 3),
-    significant = Tukey_p_adj < 0.05
+    significant_ANOVA = ANOVA_p < 0.05,
+    significant_Tukey = Tukey_p_adj < 0.05
   )
 
-write.csv(stats_table_all, "river_statistics_p_values.csv", row.names = FALSE)
 
 
-# 9. Linear regressions described in text ---------------------------------
+# Linear regressions and supp figs ----------------------------------------
+
 lm_MLB_NOSC <- lm(MLB ~ NOSC, data = podat_main)
 summary(lm_MLB_NOSC)
 
 lm_CRAM_lignin <- lm(CRAM ~ lignin_like, data = podat_main)
 summary(lm_CRAM_lignin)
 
-# Optional export of regression summaries as text
-sink("Regression_summaries.txt")
-cat("MLB ~ NOSC\n")
-print(summary(lm_MLB_NOSC))
-cat("\n\nCRAM ~ lignin_like\n")
-print(summary(lm_CRAM_lignin))
-sink()
+p_MLB_NOSC <- ggplot(podat_main, aes(x = NOSC, y = MLB, fill = River)) +
+  geom_point(
+    pch = 21,
+    colour = "black",
+    size = 4,
+    alpha = 0.85
+  ) +
+  geom_smooth(
+    aes(group = 1),
+    method = "lm",
+    se = TRUE,
+    colour = "black",
+    fill = "grey80"
+  ) +
+  theme_bw() +
+  labs(
+    x = "NOSC",
+    y = "MLB (%)",
+    fill = "River"
+  ) +
+  theme(
+    text = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank()
+  )
 
+pdf("Fig_NOSC", width = 6, height = 5)
+print(p_MLB_NOSC)
+dev.off()
+
+
+# ---- CRAM vs lignin-like molecular formulas ----
+p_CRAM_lignin <- ggplot(podat_main, aes(x = lignin_like, y = CRAM, fill = River)) +
+  geom_point(
+    pch = 21,
+    colour = "black",
+    size = 4,
+    alpha = 0.85
+  ) +
+  geom_smooth(
+    aes(group = 1),
+    method = "lm",
+    se = TRUE,
+    colour = "black",
+    fill = "grey80"
+  ) +
+  theme_bw() +
+  labs(
+    x = "Lignin-like molecular formulas",
+    y = "CRAM",
+    fill = "River"
+  ) +
+  theme(
+    text = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank()
+  )
+
+pdf("Fig_CRAM_lignin.pdf", width = 6, height = 5)
+print(p_CRAM_lignin)
+dev.off()
