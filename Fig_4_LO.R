@@ -1,5 +1,4 @@
-# Figure 4: Heteroatom-containing molecular formula classes ----
-# Relative molecular abundance of CHON, CHOS and CHONS formulas
+# Figure 4: relative molecular abundance of CHON, CHOS and CHONS formulas
 
 # 1. Libraries ----
 library(dplyr)
