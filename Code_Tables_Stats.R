@@ -1,7 +1,7 @@
 
-# Tables, statistics and data analysis for Malaysia DOM paper ------------------------------------
+# Tables, statistics and ranges listed in Malaysian rivers DOM paper ------------------------------------
+##note my labeling is now referred to differently in manuscript : pre-monsoon is actually SW monsoon, post-monsoon is NE monsoon.
 
-rm(list = ls(all = TRUE))
 par(mfrow = c(1, 1))
 
 # ---- Libraries ----
@@ -9,11 +9,19 @@ library(tidyverse)
 library(vegan)
 library(geosphere)
 
-#1. ---- Load data ----
-setwd(...)
+library(conflicted)
 
-data <- #read.csv("Metadata_Malaysia_LO.csv", sep = ",", header = TRUE, fill = TRUE)
-ct <- #read.csv("DOM_Malaysia_LO.csv", sep = ",", header = TRUE, fill = TRUE)
+conflicts_prefer(
+  dplyr::select,
+  dplyr::filter,
+  dplyr::lag
+)
+
+#1. ---- Load data ----
+# Run from the directory containing the input CSV files.
+
+data <- read.csv("Metadata_Malaysia_LO.csv", sep = ",", header = TRUE, fill = TRUE)
+ct <- read.csv("DOM_Malaysia_LO_new.csv", sep = ",", header = TRUE, fill = TRUE)
 
 ch = ct[,1:84]
 dom = ct[,85:ncol(ct)]
@@ -24,13 +32,12 @@ rownames(dom) = ch$mz
 # Convert oxygen consumption rate from µM min^-1 to µM h^-1
 data$K <- data$K * 60 
 
-
 # 2. DOM indices and compound classes -------------------------------------
 # Relative abundance normalisation
 domn <- decostand(dom, method = "total", MARGIN = 2)
 podom <- as.data.frame(t(domn))
 
-keep <- data$River != "Rajang"
+keep <- data$River != "Rajang" 
 
 podom <- podom[keep, ]
 dom <- as.data.frame(t(podom))
@@ -59,6 +66,8 @@ podat$rich <- specnumber(podom)
 podat$diversity <- diversity(podom, index = "shannon")
 podat$weighted.OC <- colSums(ch$O.C * dom)
 podat$weighted.HC <- colSums(ch$H.C * dom)
+podat$weighted.NC <- colSums((ch$N / ch$C) * dom)
+podat$weighted.SC <- colSums((ch$S / ch$C) * dom)
 podat$highly_unsaturated <- colSums(ch$Highly.unsaturated * dom)
 podat$AImod <- colSums(ch$AI.mod * dom)
 podat$N_containing <- data$N_ab*100
@@ -79,27 +88,41 @@ cram.dom <- as.data.frame(t(podom)) %>%
 
 podat$CRAM <- colSums(cram.dom)
 
-# Molecular lability boundary
-mlb <- dom %>% filter(ch$H.C >= 1.5)
-podat$MLB <- colSums(mlb) * 100
-
 # NOSC
 nosc <- -1 * (((4 * ch$C + ch$H - 3 * ch$N - 2 * ch$O + 5 * ch$P - 2 * ch$S) / ch$C) / 4)
 nosc.dom <- data.frame(nosc * t(podom))
 podat$NOSC <- colSums(nosc.dom)
 
-#Compound classes
-lignin <- as.data.frame(t(podom)) %>%
-  filter(ch$O.C >= 0.29, ch$O.C <= 0.65, ch$H.C >= 0.7, ch$H.C < 1.5)
+# Study dataset (Rajang excluded above)
+podat_main <- podat
 
-podat$lignin_like <- colSums(lignin)
+ideg <- read.csv("Ideg.csv")
 
-# Keep only main study rivers for tables/statistics
-study_rivers <- c("Maludam", "Sebuyau", "Simunjan")
+stopifnot(!anyDuplicated(ideg$FT_Name))
+stopifnot(all(podat_main$FT_Name %in% ideg_corrected$FT_Name))
 
-podat_main <- podat 
+podat_main <- podat_main %>%
+  select(-any_of("Ideg")) %>%
+  left_join(
+    ideg_corrected %>% select(FT_Name, Ideg),
+    by = "FT_Name"
+  )
 
-#3. Setting up tables -------------------------------------------------------
+stopifnot(all(is.finite(podat_main$Ideg)))
+# Terrestrial-associated peaks (t-Peaks)
+# Relative intensity as % of total assigned FT-ICR-MS peak intensity
+tpeaks <- read.csv("t_peaks.csv")
+
+tpeak_rows <- which(
+  ch$formula_isotopefree %in% tpeaks$formula
+)
+
+podat_main$tpeaks_pct <- 100 * colSums(
+  dom[tpeak_rows, , drop = FALSE],
+  na.rm = TRUE
+)
+
+# 3. Setting up tables -------------------------------------------------------
 make_summary_table <- function(dat, vars) {
   dat %>%
     dplyr::group_by(Season, River) %>%
@@ -135,11 +158,12 @@ make_range_table <- function(dat, vars) {
 }
 
 
-#4. Table 1 -----------------------------------------------------------------
+# 4. Environmental summary table (this is now table 2) -----------------------------------------------------------------
 
 
 table1_vars <- c(
   "Temp",
+  "pH",
   "DOC",
  "N2O..nM.",
   "CH4..nM.",
@@ -157,7 +181,7 @@ table1_pre <- table1_summary %>%
 table1_post <- table1_summary %>%
   filter(Season == "Post-monsoon")
 
-#5.  Table 2 -----------------------------------------------------------------
+# 5. Table of DOM molecular characteristics(this is now table 3) -----------------------------------------------------------------
 
 
 table2_vars <- c(
@@ -165,16 +189,18 @@ table2_vars <- c(
   "diversity",
   "weighted.OC",
   "weighted.HC",
-  "MLB",
+  "weighted.NC",
+  "weighted.SC",
+  "NOSC",
   "CRAM",
   "highly_unsaturated",
   "N_ab",
   "S_ab",
   "N_num",
   "S_num",
-  "AImod"
- )
-
+  "AImod",
+  "tpeaks_pct"
+)
 table2_vars <- table2_vars[table2_vars %in% names(podat_main)]
 
 table2_summary <- make_summary_table(podat_main, table2_vars)
@@ -190,23 +216,26 @@ table2_post <- table2_summary %>%
 
 range_vars <- c(
   "Temp",
+  "pH",
   "DOC",
   "Oxygen",
   "N2O..nM.",
   "CH4..nM.",
   "CO2..ppm.",
   "K",
-  "MLB",
   "CRAM",
+  "NOSC",
+  "Ideg",
   "weighted.OC",
   "weighted.HC",
+  "weighted.NC",
+  "weighted.SC",
   "AImod"
 )
 
 range_vars <- range_vars[range_vars %in% names(podat_main)]
-
 range_table <- make_range_table(podat_main, range_vars)
-
+print(range_table, width = Inf)
 
 # 7. Statistical tests ----------------------------------------------------
 
@@ -231,23 +260,7 @@ run_anova_tukey <- function(dat, variable) {
     tukey = TukeyHSD(model)
   )
 }
-
-stats_vars <- c(
-  "Temp",
-  "K",
-  "DOC",
-  "CO2..ppm.",
-  "N2O..nM.",
-  "CH4..nM.",
-  "rich",
-  "diversity",
-  "weighted.OC",
-  "weighted.HC",
-  "MLB",
-  "CRAM",
-  "AImod"
-)
-
+stats_vars <- unique(c(table1_vars, table2_vars))
 stats_vars <- stats_vars[stats_vars %in% names(podat_main)]
 
 # Overall river differences using all freshwater samples
@@ -334,7 +347,6 @@ stats_table_by_season <- purrr::map_dfr(
   }
 )
 
-stats_table_all <- stats_table_by_season
 stats_table_all <- dplyr::bind_rows(
   stats_table_overall,
   stats_table_by_season
@@ -348,72 +360,163 @@ stats_table_all <- dplyr::bind_rows(
 
 
 
-# Linear regressions and supp figs ----------------------------------------
+# 9. Statistical comparisons among rivers ----------------------------------
 
-lm_MLB_NOSC <- lm(MLB ~ NOSC, data = podat_main)
-summary(lm_MLB_NOSC)
-
-lm_CRAM_lignin <- lm(CRAM ~ lignin_like, data = podat_main)
-summary(lm_CRAM_lignin)
-
-p_MLB_NOSC <- ggplot(podat_main, aes(x = NOSC, y = MLB, fill = River)) +
-  geom_point(
-    pch = 21,
-    colour = "black",
-    size = 4,
-    alpha = 0.85
-  ) +
-  geom_smooth(
-    aes(group = 1),
-    method = "lm",
-    se = TRUE,
-    colour = "black",
-    fill = "grey80"
-  ) +
-  theme_bw() +
-  labs(
-    x = "NOSC",
-    y = "MLB (%)",
-    fill = "River"
-  ) +
-  theme(
-    text = element_text(size = 14),
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_blank()
+run_river_stats <- function(dat, variable) {
+  
+  dat2 <- dat %>%
+    select(
+      River,
+      Season,
+      all_of(variable)
+    ) %>%
+    filter(
+      !is.na(.data[[variable]]),
+      !is.na(River),
+      !is.na(Season)
+    ) %>%
+    mutate(
+      River = droplevels(factor(River)),
+      Season = droplevels(factor(Season))
+    )
+  
+  n_rivers  <- nlevels(dat2$River)
+  n_seasons <- nlevels(dat2$Season)
+  
+  # Need at least two rivers to make a river comparison
+  if (n_rivers < 2) {
+    return(
+      tibble(
+        Variable = variable,
+        N = nrow(dat2),
+        River_F = NA_real_,
+        River_p = NA_real_,
+        Season_F = NA_real_,
+        Season_p = NA_real_,
+        Maludam_vs_Sebuyau = NA_real_,
+        Maludam_vs_Simunjan = NA_real_,
+        Sebuyau_vs_Simunjan = NA_real_
+      )
+    )
+  }
+  
+  # If both seasons are represented:
+  # two-way ANOVA accounting for season
+  if (n_seasons >= 2) {
+    test_used <- "Two-way ANOVA"
+    model <- aov(
+      as.formula(paste(variable, "~ River + Season")),
+      data = dat2
+    )
+    
+    anova_out <- summary(model)[[1]]
+    
+    river_F  <- anova_out["River", "F value"]
+    river_p  <- anova_out["River", "Pr(>F)"]
+    season_F <- anova_out["Season", "F value"]
+    season_p <- anova_out["Season", "Pr(>F)"]
+    
+  } else {
+    
+    # Only one season available:
+    # compare rivers using one-way ANOVA
+    test_used <- "One-way ANOVA"
+    model <- aov(
+      as.formula(paste(variable, "~ River")),
+      data = dat2
+    )
+    
+    anova_out <- summary(model)[[1]]
+    
+    river_F <- anova_out["River", "F value"]
+    river_p <- anova_out["River", "Pr(>F)"]
+    
+    season_F <- NA_real_
+    season_p <- NA_real_
+  }
+  
+  
+  # Tukey comparisons among rivers
+  tukey <- TukeyHSD(model, "River")$River %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("comparison")
+  
+  
+  get_tukey_p <- function(comp) {
+    
+    value <- tukey %>%
+      filter(comparison == comp) %>%
+      pull(`p adj`)
+    
+    if (length(value) == 0) NA_real_ else value
+  }
+  
+  
+  tibble(
+    Variable = variable,
+    N = nrow(dat2),
+    Test = test_used,
+    River_F = river_F,
+    River_p = river_p,
+    Season_F = season_F,
+    Season_p = season_p,
+    Maludam_vs_Sebuyau =
+      get_tukey_p("Sebuyau-Maludam"),
+    Maludam_vs_Simunjan =
+      get_tukey_p("Simunjan-Maludam"),
+    Sebuyau_vs_Simunjan =
+      get_tukey_p("Simunjan-Sebuyau")
   )
+}
 
-pdf("Fig_NOSC", width = 6, height = 5)
-print(p_MLB_NOSC)
-dev.off()
+# ---- Run statistics for all summary table variables ----------------
+
+# Combine variables from the summary tables
+supp_stats_vars <- unique(c(table1_vars, table2_vars, "Ideg"))
+
+# Keep only variables present in dataset
+supp_stats_vars <- supp_stats_vars[
+  supp_stats_vars %in% names(podat_main)
+]
+
+# Run statistics
+table_S_stats <- purrr::map_dfr(
+  supp_stats_vars,
+  ~ run_river_stats(podat_main, .x)
+)
+
+write.csv(table_S_stats, "table_S1.csv")
+
+# ---- Format supplementary statistics table -------------------------------
+
+format_p <- function(p) {
+  
+  if (is.na(p)) {
+    return(NA_character_)
+  }
+  
+  if (p < 0.001) {
+    return("<0.001")
+  }
+  
+  sprintf("%.3f", p)
+}
 
 
-# ---- CRAM vs lignin-like molecular formulas ----
-p_CRAM_lignin <- ggplot(podat_main, aes(x = lignin_like, y = CRAM, fill = River)) +
-  geom_point(
-    pch = 21,
-    colour = "black",
-    size = 4,
-    alpha = 0.85
-  ) +
-  geom_smooth(
-    aes(group = 1),
-    method = "lm",
-    se = TRUE,
-    colour = "black",
-    fill = "grey80"
-  ) +
-  theme_bw() +
-  labs(
-    x = "Lignin-like molecular formulas",
-    y = "CRAM",
-    fill = "River"
-  ) +
-  theme(
-    text = element_text(size = 14),
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_blank()
+table_S_formatted <- table_S_stats %>%
+  mutate(
+    River_F = round(River_F, 2),
+    River_p = vapply(River_p, format_p, character(1)),
+    
+    Season_F = round(Season_F, 2),
+    Season_p = vapply(Season_p, format_p, character(1)),
+    
+    Maludam_vs_Sebuyau =
+      vapply(Maludam_vs_Sebuyau, format_p, character(1)),
+    
+    Maludam_vs_Simunjan =
+      vapply(Maludam_vs_Simunjan, format_p, character(1)),
+    
+    Sebuyau_vs_Simunjan =
+      vapply(Sebuyau_vs_Simunjan, format_p, character(1))
   )
-
-pdf("Fig_CRAM_lignin.pdf", width = 6, height = 5)
-print(p_CRAM_lignin)
-dev.off()
